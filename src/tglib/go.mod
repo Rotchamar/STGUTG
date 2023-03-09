@@ -17,7 +17,6 @@ require (
         github.com/free5gc/nas v1.0.1
         github.com/free5gc/ngap v1.0.4
         github.com/free5gc/openapi v1.0.2
-        github.com/ghedo/go.pkt v0.0.0-20200209120728-c97f47ad982f
         github.com/gin-gonic/gin v1.7.1
         github.com/google/uuid v1.3.0
         github.com/ishidawataru/sctp v0.0.0-20210707070123-9a39160e9062
