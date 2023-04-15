@@ -46,7 +46,7 @@ configuration:
   eth_dst: "080027ac26b4"
 
   # Number of UEs to use in traffic mode
-  ue_number: 2
+  ue_number: 1
 
   # Number of repetitions for each test (Test mode)
   ue_registration: 10

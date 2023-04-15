@@ -13,7 +13,6 @@ import (
 	"tglib"
 
 	"bytes"
-	"encoding/hex"
 	"fmt"
 	"net"
 	"syscall"
@@ -27,8 +26,7 @@ import (
 // the client.
 func ListenForResponses(ethSocketConn tglib.EthSocketConn, upfConn *net.UDPConn) {
 
-	// TODO: this should be a configuration parameter?
-	table := GetARPTable("/proc/net/arp")
+	fd, _ := syscall.Socket(syscall.AF_INET, syscall.SOCK_RAW, syscall.IPPROTO_RAW)
 
 	rcvBuf := make([]byte, 1500)
 
@@ -46,17 +44,19 @@ func ListenForResponses(ethSocketConn tglib.EthSocketConn, upfConn *net.UDPConn)
 		} else if enc_b[0]&3 != 0 {
 			gtp_hdr_size += 4
 		}
-		enc_b = enc_b[gtp_hdr_size:]
+		ipPkt := enc_b[gtp_hdr_size:]
 		ManageError("Error capturing receiving traffic", err)
 
-		// TODO: This will fail if no ARP table entry has been previously added
-		// for the IP in enc_b.
-		eth_dst, err := hex.DecodeString(GetMAC(GetIP(enc_b), table))
-		ManageError("Error retrieving Dst MAC address", err)
+		var ipAddr [4]byte
+		copy(ipAddr[:], ipPkt[16:])
 
-		frame := bytes.Join([][]byte{eth_dst, []byte(ethSocketConn.Iface.HardwareAddr), []byte("\x08\x00"), enc_b}, nil)
+		addr := syscall.SockaddrInet4{
+			Addr: ipAddr,
+		}
 
-		err = syscall.Sendto(ethSocketConn.Fd, frame, 0, &(ethSocketConn.Addr))
+		// fmt.Println(ipAddr)
+
+		err = syscall.Sendto(fd, ipPkt, 0, &addr)
 		ManageError("Sendto", err)
 
 	}
@@ -78,21 +78,21 @@ func SendTraffic(upfConn *net.UDPConn, ethSocketConn tglib.EthSocketConn, teids 
 			continue
 		}
 
-		if bytes.Equal(data[0:6], []byte(ethSocketConn.Iface.HardwareAddr)) && bytes.Equal(data[12:14], []byte{8, 0}) {
+		if bytes.Equal(data[0:6], []byte(ethSocketConn.Iface.HardwareAddr)) &&
+			bytes.Equal(data[12:14], []byte{0x88, 0x64}) &&
+			bytes.Equal(data[20:22], []byte{0x00, 0x21}) {
 
-			ethFrame := data[:frameSize]
+			ipPkt := data[22:frameSize]
 
-			//fmt.Println(ethFrame)
-
-			src_ip := ethFrame[14+12 : 14+16]
+			src_ip := ipPkt[12:16]
 
 			//fmt.Println(src_ip)
 			teid := GetTEID(src_ip, teids)
 
-			gtpHdr, err := tglib.BuildGTPv1Header(false, 0, false, 0, false, 0, uint16(len(ethFrame[14:])), teid)
+			gtpHdr, err := tglib.BuildGTPv1Header(false, 0, false, 0, false, 0, uint16(len(ipPkt)), teid)
 			ManageError("Error capturing and sending traffic", err)
 
-			_, err = upfConn.Write(append(gtpHdr, ethFrame[14:]...))
+			_, err = upfConn.Write(append(gtpHdr, ipPkt...))
 			ManageError("Error capturing and sending traffic", err)
 
 		}
