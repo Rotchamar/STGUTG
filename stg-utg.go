@@ -20,9 +20,11 @@ import (
 
 func main() {
 
-	var ueList []*tglib.RanUeContext
-	var pduList [][]byte
-	teidUpfIPs := make(map[[4]byte]stgutg.TeidUpfIp)
+	// Needed to assert that no two NGAP exchanges happen at the same time
+	var ngapMutex sync.Mutex
+
+	var clients stgutg.Clients
+	clients.Value = make(map[[6]byte]stgutg.ClientInfo)
 
 	var c stgutg.Conf
 	c.GetConfiguration()
@@ -34,57 +36,21 @@ func main() {
 		fmt.Println("----------------------")
 
 		fmt.Println(">> Connecting to AMF")
-		conn, err := tglib.ConnectToAmf(c.Configuration.Amf_ngap,
+		amfConn, err := tglib.ConnectToAmf(
+			c.Configuration.Amf_ngap,
 			c.Configuration.Gnb_ngap,
 			c.Configuration.Amf_port,
-			c.Configuration.Gnbn_port)
+			c.Configuration.Gnbn_port,
+		)
 		stgutg.ManageError("Error in connection to AMF", err)
 
 		fmt.Println(">> Managing NG Setup")
-		stgutg.ManageNGSetup(conn,
+		stgutg.ManageNGSetup(
+			amfConn,
 			c.Configuration.Gnb_id,
 			c.Configuration.Gnb_bitlength,
-			c.Configuration.Gnb_name)
-
-		for i := 0; i < c.Configuration.UeNumber; i++ {
-			imsi := c.Configuration.Initial_imsi + i
-
-			fmt.Println(">> Creating new UE with IMSI:", imsi)
-			ue := stgutg.CreateUE(imsi,
-				c.Configuration.K,
-				c.Configuration.OPC,
-				c.Configuration.OP)
-
-			fmt.Println(">> Registering UE with IMSI:", imsi)
-			ue, pdu, _ := stgutg.RegisterUE(ue,
-				c.Configuration.Mnc,
-				conn)
-
-			ueList = append(ueList, ue)
-			pduList = append(pduList, pdu)
-
-			time.Sleep(1 * time.Second)
-		}
-
-		i := 0
-		for _, pdu := range pduList {
-			fmt.Println(">> Establishing PDU session for", ueList[i].Supi)
-
-			// PDU info stored in teidUpfIPs
-			stgutg.EstablishPDU(c.Configuration.SST,
-				c.Configuration.SD,
-				pdu,
-				ueList[i],
-				conn,
-				c.Configuration.Gnb_gtp,
-				c.Configuration.Upf_port,
-				teidUpfIPs)
-
-			i++
-			time.Sleep(1 * time.Second)
-		}
-
-		fmt.Println(teidUpfIPs)
+			c.Configuration.Gnb_name,
+		)
 
 		fmt.Println(">> Connecting to UPF")
 		upfFD, err := tglib.ConnectToUpf(c.Configuration.Gnbg_port)
@@ -97,21 +63,31 @@ func main() {
 		ipSocketConn, err := tglib.NewIPSocketConn()
 		stgutg.ManageError("Error creating IP socket", err)
 
+		fmt.Println(">> Creating DHCP Server")
+		udpServer, err := stgutg.CreateDHCPServer(amfConn, &ngapMutex)
+		stgutg.ManageError("Error in creating UDP Server", err)
+		var clients stgutg.Clients
+		clients.Value = make(map[[6]byte]stgutg.ClientInfo)
+
 		var stopProgram = make(chan os.Signal)
 		signal.Notify(stopProgram, syscall.SIGTERM)
 		signal.Notify(stopProgram, syscall.SIGINT)
 
 		ctx, cancelFunc := context.WithCancel(context.Background())
+		dhcpCtx, dhcpCancelFunc := context.WithCancel(context.Background())
 		wg := &sync.WaitGroup{}
 		utg_ul_thread_chan := make(chan stgutg.Thread)
 
-		wg.Add(2)
+		wg.Add(3)
+
+		fmt.Println(">> Starting DHCP Server")
+		go stgutg.RunDHCPServer(udpServer, ethSocketConn, &clients, c, dhcpCtx, wg)
 
 		fmt.Println(">> Listening to traffic responses")
 		go stgutg.ListenForResponses(ipSocketConn, upfFD, ctx, wg)
 
 		fmt.Println(">> Waiting for traffic to send (Press Ctrl+C to quit)")
-		go stgutg.SendTraffic(upfFD, ethSocketConn, teidUpfIPs, ctx, wg, utg_ul_thread_chan)
+		go stgutg.SendTraffic(upfFD, ethSocketConn, &clients, ctx, wg, utg_ul_thread_chan)
 
 		utg_ul_thread := <-utg_ul_thread_chan
 
@@ -125,28 +101,51 @@ func main() {
 		C.pthread_kill(C.ulong(utg_ul_thread.Id), C.SIGUSR1)
 		syscall.Shutdown(upfFD, syscall.SHUT_RD)
 
-		for _, ue := range ueList {
-			fmt.Println(">> Releasing PDU session for", ue.Supi)
-			stgutg.ReleasePDU(c.Configuration.SST,
-				c.Configuration.SD,
-				ue,
-				conn)
-			time.Sleep(1 * time.Second)
-		}
+		// Deny all new incoming DHCP requests
+		stgutg.SetShutdownStarted()
 
-		for _, ue := range ueList {
-			fmt.Println(">> Deregistering UE", ue.Supi)
-			stgutg.DeregisterUE(ue,
+		clients.Mutex.Lock()
+		for clientMAC, client := range clients.Value {
+
+			if client.SessionEstablished {
+				fmt.Println(">> Releasing PDU session for", client.UE.Supi)
+				ngapMutex.Lock()
+				stgutg.ReleasePDU(
+					c.Configuration.SST,
+					c.Configuration.SD,
+					client.UE,
+					amfConn,
+				)
+				ngapMutex.Unlock()
+				time.Sleep(1 * time.Second)
+
+				stgutg.ForceRenew(clientMAC, ethSocketConn)
+			}
+
+			fmt.Println(">> Deregistering UE", client.UE.Supi)
+			ngapMutex.Lock()
+			stgutg.DeregisterUE(
+				client.UE,
 				c.Configuration.Mnc,
-				conn)
+				amfConn,
+			)
+			ngapMutex.Unlock()
 			time.Sleep(2 * time.Second)
+
+			delete(clients.Value, clientMAC)
 		}
+		clients.Mutex.Unlock()
 
 		time.Sleep(1 * time.Second)
-		conn.Close()
 
-		fmt.Println(">> Waiting for UTG to shut down")
-		wg.Wait() // Wait for UTG to shut down, then close interfaces
+		// Call for DHCP Server to shut down
+		dhcpCancelFunc()
+		udpServer.Close()
+
+		amfConn.Close()
+
+		fmt.Println(">> Waiting for UTG and DHCP Server to shut down")
+		wg.Wait() // Wait for UTG and DHCP Server to shut down, then close interfaces
 
 		fmt.Println(">> Closing network interfaces")
 		syscall.Close(upfFD)
@@ -160,114 +159,7 @@ func main() {
 		fmt.Println("TEST MODE")
 		fmt.Println("----------------------")
 
-		pdu_establishment_number := stgutg.Min(c.Configuration.Test_ue_registation,
-			c.Configuration.Test_ue_pdu_establishment)
+		// TODO: Test Mode
 
-		service_request_number := stgutg.Min(pdu_establishment_number,
-			c.Configuration.Test_ue_service)
-
-		pdu_release_number := stgutg.Min(pdu_establishment_number,
-			c.Configuration.Test_ue_pdu_release)
-
-		ue_deregistration_number := stgutg.Min(c.Configuration.Test_ue_registation,
-			c.Configuration.Test_ue_deregistration)
-
-		fmt.Println(">> Configured tests:")
-		fmt.Println("> Registering UEs:", c.Configuration.Test_ue_registation)
-		fmt.Println("> PDU sessions to establish:", pdu_establishment_number)
-		fmt.Println("> Services to request: ", service_request_number)
-		fmt.Println("> PDU sessions to release:", pdu_release_number)
-		fmt.Println("> Deregistering UEs:", ue_deregistration_number)
-		fmt.Println("----------------------")
-
-		fmt.Println(">> Connecting to AMF")
-		conn, err := tglib.ConnectToAmf(c.Configuration.Amf_ngap,
-			c.Configuration.Gnb_ngap,
-			c.Configuration.Amf_port,
-			c.Configuration.Gnbn_port)
-		stgutg.ManageError("Error in connection to AMF", err)
-
-		fmt.Println(">> Managing NG Setup")
-		stgutg.ManageNGSetup(conn,
-			c.Configuration.Gnb_id,
-			c.Configuration.Gnb_bitlength,
-			c.Configuration.Gnb_name)
-
-		for i := 0; i < c.Configuration.Test_ue_registation; i++ {
-			fmt.Println(">> [ UE REGISTRATION TEST", i+1, "]")
-
-			imsi := c.Configuration.Initial_imsi + i
-
-			fmt.Println(">> Creating new UE with IMSI:", imsi)
-			ue := stgutg.CreateUE(imsi,
-				c.Configuration.K,
-				c.Configuration.OPC,
-				c.Configuration.OP)
-
-			fmt.Println(">> Registering UE with IMSI:", imsi)
-			ue, pdu, _ := stgutg.RegisterUE(ue,
-				c.Configuration.Mnc,
-				conn)
-
-			ueList = append(ueList, ue)
-			pduList = append(pduList, pdu)
-
-			time.Sleep(1 * time.Second)
-		}
-
-		for i := 0; i < pdu_establishment_number; i++ {
-			fmt.Println(">> [ PDU ESTABLISHMENT TEST", i+1, "]")
-
-			fmt.Println(">> Establishing PDU session for", ueList[i].Supi)
-			stgutg.EstablishPDU(c.Configuration.SST,
-				c.Configuration.SD,
-				pduList[i],
-				ueList[i],
-				conn,
-				c.Configuration.Gnb_gtp,
-				c.Configuration.Upf_port,
-				teidUpfIPs)
-
-			time.Sleep(1 * time.Second)
-		}
-
-		for i := 0; i < service_request_number; i++ {
-			fmt.Println(">> [ SERVICE REQUEST TEST", i+1, "]")
-
-			fmt.Println(">> Requesting service for", ueList[i].Supi)
-			stgutg.ServiceRequest(pduList[i],
-				ueList[i],
-				conn,
-				c.Configuration.Gnb_gtp)
-
-			time.Sleep(1 * time.Second)
-		}
-
-		for i := 0; i < pdu_release_number; i++ {
-			fmt.Println(">> [ PDU RELEASE TEST", i+1, "]")
-
-			fmt.Println(">> Releasing PDU session for", ueList[i].Supi)
-			stgutg.ReleasePDU(c.Configuration.SST,
-				c.Configuration.SD,
-				ueList[i],
-				conn)
-			time.Sleep(1 * time.Second)
-		}
-
-		for i := 0; i < ue_deregistration_number; i++ {
-			fmt.Println(">> [ UE DEREGISTRATION TEST", i+1, "]")
-
-			fmt.Println(">> Deregistering UE", ueList[i].Supi)
-			stgutg.DeregisterUE(ueList[i],
-				c.Configuration.Mnc,
-				conn)
-			time.Sleep(1 * time.Second)
-
-		}
-
-		fmt.Println(">> All tests finished")
-		conn.Close()
-
-		os.Exit(0)
 	}
 }

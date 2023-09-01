@@ -8,7 +8,6 @@ package stgutg
 import (
 	"free5gclib/nas/nasMessage"
 	"free5gclib/nas/nasType"
-	"syscall"
 
 	"gopkg.in/yaml.v2"
 
@@ -21,38 +20,32 @@ import (
 
 type Conf struct {
 	Configuration struct {
-		Amf_ngap                  string `yaml:"amf_ngap"`
-		Amf_port                  int    `yaml:"amf_port"`
-		Gnb_gtp                   string `yaml:"gnb_gtp"`
-		Gnbg_port                 int    `yaml:"gnbg_port"`
-		Gnb_ngap                  string `yaml:"gnb_ngap"`
-		Gnbn_port                 int    `yaml:"gnbn_port"`
-		Upf_port                  int    `yaml:"upf_port"`
-		Gnb_id                    string `yaml:"gnb_id"`
-		Gnb_bitlength             uint64 `yaml:"gnb_bitlength"`
-		Gnb_name                  string `yaml:"gnb_name"`
-		Initial_imsi              int    `yaml:"initial_imsi"`
-		Mnc                       string `yaml:"mnc"`
-		K                         string `yaml:"k"`
-		OPC                       string `yaml:"opc"`
-		OP                        string `yaml:"op"`
-		SST                       int32  `yaml:"sst"`
-		SD                        string `yaml:"sd"`
-		SrcIface                  string `yaml:"src_iface"`
-		UeNumber                  int    `yaml:"ue_number"`
-		Test_ue_registation       int    `yaml:"ue_registration"`
-		Test_ue_pdu_establishment int    `yaml:"ue_pdu"`
-		Test_ue_service           int    `yaml:"ue_service"`
-		Test_ue_pdu_release       int    `yaml:"ue_pdu_release"`
-		Test_ue_deregistration    int    `yaml:"ue_deregistration"`
+		Amf_ngap                  string         `yaml:"amf_ngap"`
+		Amf_port                  int            `yaml:"amf_port"`
+		Gnb_gtp                   string         `yaml:"gnb_gtp"`
+		Gnbg_port                 int            `yaml:"gnbg_port"`
+		Gnb_ngap                  string         `yaml:"gnb_ngap"`
+		Gnbn_port                 int            `yaml:"gnbn_port"`
+		Upf_port                  int            `yaml:"upf_port"`
+		Gnb_id                    string         `yaml:"gnb_id"`
+		Gnb_bitlength             uint64         `yaml:"gnb_bitlength"`
+		Gnb_name                  string         `yaml:"gnb_name"`
+		Initial_imsi              int            `yaml:"initial_imsi"`
+		Mnc                       string         `yaml:"mnc"`
+		Clients                   map[string]int `yaml:"clients,omitempty"`
+		K                         string         `yaml:"k"`
+		OPC                       string         `yaml:"opc"`
+		OP                        string         `yaml:"op"`
+		SST                       int32          `yaml:"sst"`
+		SD                        string         `yaml:"sd"`
+		SrcIface                  string         `yaml:"src_iface"`
+		UeNumber                  int            `yaml:"ue_number"`
+		Test_ue_registation       int            `yaml:"ue_registration"`
+		Test_ue_pdu_establishment int            `yaml:"ue_pdu"`
+		Test_ue_service           int            `yaml:"ue_service"`
+		Test_ue_pdu_release       int            `yaml:"ue_pdu_release"`
+		Test_ue_deregistration    int            `yaml:"ue_deregistration"`
 	}
-}
-
-// TeidUpfIp
-// Structure to store tuples of IP addresses and TEIDs.
-type TeidUpfIp struct {
-	teid    uint32
-	upfAddr *syscall.SockaddrInet4
 }
 
 func (c *Conf) GetConfiguration() Conf {

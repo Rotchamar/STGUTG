@@ -97,7 +97,7 @@ func ListenForResponses(ipSocketConn tglib.IPSocketConn, upfFD int, ctx context.
 // generate the user traffic (src), emulating the UEs.
 // It checks the source IP address to determine the TEID to use when adding the GTP
 // header and then sends the traffic to the UPF.
-func SendTraffic(upfFD int, ethSocketConn tglib.EthSocketConn, teidUpfIPs map[[4]byte]TeidUpfIp, ctx context.Context, wg *sync.WaitGroup, thread_id_chan chan Thread) {
+func SendTraffic(upfFD int, ethSocketConn tglib.EthSocketConn, clients *Clients, ctx context.Context, wg *sync.WaitGroup, thread_id_chan chan Thread) {
 	runtime.LockOSThread() // Force this goroutine to always run on the same OS thread (Maybe not needed)
 
 	defer wg.Done()
@@ -128,17 +128,21 @@ func SendTraffic(upfFD int, ethSocketConn tglib.EthSocketConn, teidUpfIPs map[[4
 
 			ethFrame := data[:frameSize]
 
-			//fmt.Println(ethFrame)
+			src_macAddr := [6]byte(ethFrame[6:12])
 
-			src_ip := ethFrame[14+12 : 14+16]
+			clients.Mutex.RLock()
+			client, ok := clients.Value[src_macAddr]
+			clients.Mutex.RUnlock()
+			if !ok {
+				continue
+			}
 
-			//fmt.Println(src_ip)
-			teid := teidUpfIPs[([4]byte)(src_ip)].teid
+			teid := client.TEID
 
 			gtpHdr, err := tglib.BuildGTPv1Header(false, 0, false, 0, false, 0, uint16(len(ethFrame[14:])), teid)
 			ManageError("Error capturing and sending traffic", err)
 
-			err = syscall.Sendto(upfFD, append(gtpHdr, ethFrame[14:]...), 0, teidUpfIPs[([4]byte)(src_ip)].upfAddr)
+			err = syscall.Sendto(upfFD, append(gtpHdr, ethFrame[14:]...), 0, client.UPFAddr)
 			ManageError("Error capturing and sending traffic", err)
 
 		}

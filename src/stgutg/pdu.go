@@ -58,7 +58,7 @@ var PDUSessionEstablishmentAcceptOptionalElementsHalfByte = []byte{
 // Function that establishes a new PDU session for a given UE.
 // It requres a previously generated UE and an active SCTP connection with an AMF.
 // It returns a tuple of assigned IP for the UE and the corresponding TEID.
-func EstablishPDU(sst int32, sd string, pdu []byte, ue *tglib.RanUeContext, conn *sctp.SCTPConn, gnb_gtp string, upf_port int, teidUpfIPs map[[4]byte]TeidUpfIp) {
+func EstablishPDU(sst int32, sd string, pdu []byte, ue *tglib.RanUeContext, conn *sctp.SCTPConn, gnb_gtp string, upf_port int, clientInfo *ClientInfo) {
 
 	var recvMsg = make([]byte, 2048)
 	sNssai := models.Snssai{
@@ -106,7 +106,9 @@ func EstablishPDU(sst int32, sd string, pdu []byte, ue *tglib.RanUeContext, conn
 	teid := binary.BigEndian.Uint32(bteid)
 	upfAddr := syscall.SockaddrInet4{Addr: ([4]byte)(bupfip), Port: upf_port}
 
-	teidUpfIPs[bip] = TeidUpfIp{teid, &upfAddr}
+	clientInfo.IP = bip[:]
+	clientInfo.TEID = teid
+	clientInfo.UPFAddr = &upfAddr
 
 	sendMsg, err = tglib.GetPDUSessionResourceSetupResponse(ue.AmfUeNgapId,
 		ue.RanUeNgapId,
@@ -180,7 +182,9 @@ func ReleasePDU(sst int32, sd string, ue *tglib.RanUeContext, conn *sctp.SCTPCon
 	_, err = conn.Write(sendMsg)
 	ManageError("Error releasing PDU", err)
 
-	time.Sleep(1 * time.Second)
+	var recvMsg = make([]byte, 2048)
+	_, err = conn.Read(recvMsg)
+	ManageError("Error releasing PDU", err)
 
 	return pdu
 }

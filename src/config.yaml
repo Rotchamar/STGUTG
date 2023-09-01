@@ -18,8 +18,12 @@ configuration:
 
 # UE
   initial_imsi: 208930000000003
-  mcc: "208"
   mnc: "93"
+
+# MAC:IMSI
+  clients:
+    0800273C154A: 208930000000003
+    0800279422C1: 208930000000004
 
 # GNB data
   gnb_id: "\x00\x01\x02"
