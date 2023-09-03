@@ -294,6 +294,7 @@ func newOfferFromDiscover(discover *dhcpv4.DHCPv4, clients *Clients, conf Conf) 
 		dhcpv4.Option{Code: dhcpv4.OptionServerIdentifier, Value: ServerIP},
 		dhcpv4.Option{Code: dhcpv4.OptionIPAddressLeaseTime, Value: leaseTime(86400)}, // 1 day
 		dhcpv4.Option{Code: dhcpv4.OptionSubnetMask, Value: dhcpIP([]byte{0xff, 0xff, 0xff, 0x00})},
+		dhcpv4.Option{Code: dhcpv4.OptionClasslessStaticRoute, Value: dhcpIP(append([]byte{0x00}, ServerIP.ToBytes()...))},
 	)
 
 	client.State = CodeSentOffer
@@ -353,6 +354,7 @@ func newAckFromRequest(request *dhcpv4.DHCPv4, clients *Clients) (*dhcpv4.DHCPv4
 		dhcpv4.Option{Code: dhcpv4.OptionServerIdentifier, Value: ServerIP},
 		dhcpv4.Option{Code: dhcpv4.OptionIPAddressLeaseTime, Value: leaseTime(86400)}, // 1 day
 		dhcpv4.Option{Code: dhcpv4.OptionSubnetMask, Value: dhcpIP([]byte{0xff, 0xff, 0xff, 0x00})},
+		dhcpv4.Option{Code: dhcpv4.OptionClasslessStaticRoute, Value: dhcpIP(append([]byte{0x00}, ServerIP.ToBytes()...))},
 	)
 
 	client.State = CodeSentAck
